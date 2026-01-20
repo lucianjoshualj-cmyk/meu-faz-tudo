@@ -90,8 +90,6 @@ Nunca prescreve nem dá diagnóstico.
     return "Tive um probleminha aqui 😅 Pode tentar de novo em 1 minutinho?";
   }
 }
-
-    }
   );
 
   return response.data.choices[0].message.content;
