@@ -50,22 +50,47 @@ Organiza agenda, finanças básicas e rotina saudável
 Nunca prescreve nem dá diagnóstico.
 `;
 
-  const messages = [
+  const input = [
     { role: "system", content: system },
     ...history,
     { role: "user", content: message }
   ];
 
-  const response = await axios.post(
-    "https://api.openai.com/v1/chat/completions",
-    {
-      model: "gpt-4.1-mini",
-      messages
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+  try {
+    const resp = await axios.post(
+      "https://api.openai.com/v1/responses",
+      {
+        model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+        input
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 15000
       }
+    );
+
+    const out = resp.data.output || [];
+    const parts = [];
+
+    for (const item of out) {
+      if (item.type === "message" && item.content) {
+        for (const c of item.content) {
+          if (c.type === "output_text") parts.push(c.text);
+        }
+      }
+    }
+
+    const text = parts.join("\n").trim();
+    return text || "Entendi 😊 Me diz só mais um detalhe pra eu organizar certinho?";
+  } catch (err) {
+    console.error("OpenAI erro:", err?.response?.data || err?.message || err);
+    return "Tive um probleminha aqui 😅 Pode tentar de novo em 1 minutinho?";
+  }
+}
+
     }
   );
 
@@ -76,19 +101,41 @@ function uid() {
   return Math.random().toString(16).slice(2);
 }
 
-app.post("/whatsapp", async (req, res) => {
-  const from = req.body.From;
-  const body = req.body.Body;
+app.post("/whatsapp", (req, res) => {
+  // Responde IMEDIATAMENTE ao Twilio via TwiML (evita 11200/502)
+  try {
+    res.set("Content-Type", "text/xml");
+    res.status(200).send(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Message>Recebi! 😊 Já já eu te respondo.</Message>
+</Response>`);
+  } catch (e) {
+    try { res.sendStatus(200); } catch (_) {}
+  }
 
-  const user = getUser(from);
-  user.memory.push({ role: "user", content: body });
+  // Processa em segundo plano
+  setImmediate(async () => {
+    try {
+      const from = req.body?.From;
+      const body = (req.body?.Body || "").trim();
+      if (!from) return;
 
-  const reply = await askOpenAI(user, body);
-  user.memory.push({ role: "assistant", content: reply });
+      const user = getUser(from);
+      user.memory.push({ role: "user", content: body });
 
-  await sendWhatsApp(from, reply);
-  res.sendStatus(200);
+      const reply = await askOpenAI(user, body);
+      user.memory.push({ role: "assistant", content: reply });
+
+      await sendWhatsApp(from, reply);
+    } catch (err) {
+      console.error("Erro no processamento:", err?.response?.data || err?.message || err);
+      try {
+        if (req.body?.From) await sendWhatsApp(req.body.From, "Tive um erro rapidinho 😅 tenta de novo em 1 minutinho.");
+      } catch (_) {}
+    }
+  });
 });
+
 
 app.get("/", (req, res) => {
   res.send("Meu Faz Tudo está online ✅");
