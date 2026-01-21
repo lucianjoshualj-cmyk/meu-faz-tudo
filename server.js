@@ -3,7 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const axios = require("axios");
-const cron = require("node-cron");
+const cron = require("node-cron"); // (mantido, mesmo não usado ainda)
 const Twilio = require("twilio");
 
 const app = express();
@@ -72,6 +72,7 @@ Nunca prescreve nem dá diagnóstico.
       }
     );
 
+    // Extrai texto da Responses API
     const out = resp.data.output || [];
     const parts = [];
 
@@ -89,10 +90,6 @@ Nunca prescreve nem dá diagnóstico.
     console.error("OpenAI erro:", err?.response?.data || err?.message || err);
     return "Tive um probleminha aqui 😅 Pode tentar de novo em 1 minutinho?";
   }
-}
-  );
-
-  return response.data.choices[0].message.content;
 }
 
 function uid() {
@@ -128,12 +125,13 @@ app.post("/whatsapp", (req, res) => {
     } catch (err) {
       console.error("Erro no processamento:", err?.response?.data || err?.message || err);
       try {
-        if (req.body?.From) await sendWhatsApp(req.body.From, "Tive um erro rapidinho 😅 tenta de novo em 1 minutinho.");
+        if (req.body?.From) {
+          await sendWhatsApp(req.body.From, "Tive um erro rapidinho 😅 tenta de novo em 1 minutinho.");
+        }
       } catch (_) {}
     }
   });
 });
-
 
 app.get("/", (req, res) => {
   res.send("Meu Faz Tudo está online ✅");
