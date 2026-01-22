@@ -198,6 +198,142 @@ Nunca prescreve nem dá diagnóstico.
 function uid() {
   return Math.random().toString(16).slice(2);
 }
+// ======================================
+// 🧠 COMANDOS DE SAÚDE + CONFIRMAÇÃO
+// ======================================
+
+function normalize(s) {
+  return String(s || "").trim();
+}
+
+function isYes(text) {
+  const t = normalize(text).toLowerCase();
+  return ["sim", "s", "ok", "confirmo", "confirmar", "pode", "isso"].includes(t);
+}
+
+function isNo(text) {
+  const t = normalize(text).toLowerCase();
+  return ["não", "nao", "n", "cancela", "cancelar", "negativo"].includes(t);
+}
+
+function parseHHMM(text) {
+  const m = normalize(text).match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null;
+}
+
+// Detecta comandos do tipo: "Esporte: corrida 07:00"
+function parseHealthAdd(text) {
+  const raw = normalize(text);
+
+  const isSport = /^esporte\s*:/i.test(raw);
+  const isMed = /^(rem[eé]dio|medic(a|á)ção|med)\s*:/i.test(raw);
+  const isSupp = /^(suplemento|supp)\s*:/i.test(raw);
+
+  if (!isSport && !isMed && !isSupp) return null;
+
+  const category = isSport ? "sports" : isMed ? "meds" : "supplements";
+  const afterColon = raw.split(":").slice(1).join(":").trim();
+
+  const time = parseHHMM(afterColon);
+  if (!time) return { error: "Preciso do horário no formato HH:MM. Ex: Esporte: corrida 07:00" };
+
+  // label = tudo antes do horário
+  const label = afterColon.replace(time, "").trim().replace(/\s+/g, " ");
+  if (!label) return { error: "Me diga o nome. Ex: Suplemento: creatina 08:00" };
+
+  return { category, label, time };
+}
+
+function parseHealthList(text) {
+  return /^sa[uú]de\s*:\s*listar\s*$/i.test(normalize(text));
+}
+
+function parseHealthRemove(text) {
+  const m = normalize(text).match(/^sa[uú]de\s*:\s*remover\s+(.+)\s*$/i);
+  if (!m) return null;
+  const label = m[1].trim();
+  return label ? { label } : null;
+}
+
+function formatHealthList(user) {
+  const lines = [];
+  const sports = user.health?.sports || [];
+  const meds = user.health?.meds || [];
+  const sups = user.health?.supplements || [];
+
+  if (!sports.length && !meds.length && !sups.length) {
+    return "🩺 Você ainda não cadastrou nada de saúde. Ex: Esporte: corrida 07:00";
+  }
+
+  if (sports.length) {
+    lines.push("🏃 Esportes:");
+    for (const s of sports) lines.push(`- ${s.label} — ${s.time}`);
+  }
+  if (meds.length) {
+    lines.push("💊 Medicações:");
+    for (const m of meds) lines.push(`- ${m.label} — ${m.time}`);
+  }
+  if (sups.length) {
+    lines.push("🧪 Suplementos:");
+    for (const sp of sups) lines.push(`- ${sp.label} — ${sp.time}`);
+  }
+
+  lines.push("\nPara remover: Saúde: remover NOME");
+  return lines.join("\n");
+}
+
+function handleHealthCommands(user, text) {
+  // Confirmação pendente
+  if (user.pendingHealth) {
+    if (isYes(text)) {
+      const { category, label, time } = user.pendingHealth;
+      user.health[category].push({ label, time, lastNotified: null });
+      user.pendingHealth = null;
+      return `✅ Fechado. Salvei: ${label} às ${time}.`;
+    }
+    if (isNo(text)) {
+      user.pendingHealth = null;
+      return "❌ Cancelado. Me diga de novo quando quiser.";
+    }
+    return "Só pra confirmar: responde *sim* ou *não* 🙂";
+  }
+
+  // Listar
+  if (parseHealthList(text)) {
+    return formatHealthList(user);
+  }
+
+  // Remover
+  const rem = parseHealthRemove(text);
+  if (rem) {
+    const target = rem.label.toLowerCase();
+    const buckets = ["sports", "meds", "supplements"];
+    let removed = 0;
+
+    for (const b of buckets) {
+      const arr = user.health[b] || [];
+      const before = arr.length;
+      user.health[b] = arr.filter(x => String(x.label).toLowerCase() !== target);
+      removed += (before - user.health[b].length);
+    }
+
+    if (!removed) return `Não achei "${rem.label}" na sua saúde. Use "Saúde: listar" pra ver o que existe.`;
+    return `🗑️ Removi "${rem.label}".`;
+  }
+
+  // Adicionar
+  const add = parseHealthAdd(text);
+  if (add) {
+    if (add.error) return add.error;
+
+    // cria pendência para confirmação
+    user.pendingHealth = add;
+    const tipo = add.category === "sports" ? "esporte" : add.category === "meds" ? "medicação" : "suplemento";
+    return `Confirmar cadastro de ${tipo}: *${add.label}* às *${add.time}*? (sim/não)`;
+  }
+
+  return null; // não era comando de saúde
+}
 
 app.post("/whatsapp", (req, res) => {
   // Responde IMEDIATAMENTE ao Twilio via TwiML (evita 11200/502)
@@ -221,7 +357,16 @@ app.post("/whatsapp", (req, res) => {
       const user = getUser(from);
       user.memory.push({ role: "user", content: body });
 
-      const reply = await askOpenAI(user, body);
+      // 1) tenta comandos de saúde primeiro (com confirmação)
+const cmdReply = handleHealthCommands(user, body);
+if (cmdReply) {
+  await sendWhatsApp(from, cmdReply);
+  return;
+}
+
+// 2) se não for comando, segue IA
+const reply = await askOpenAI(user, body);
+
       user.memory.push({ role: "assistant", content: reply });
 
       await sendWhatsApp(from, reply);
