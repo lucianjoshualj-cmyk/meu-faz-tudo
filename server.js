@@ -17,6 +17,109 @@ const twilio = Twilio(
 
 // Banco simples em memória (MVP)
 const users = {};
+// ================================
+// 🔁 SCHEDULER CENTRAL (AUTOMAÇÃO)
+// ================================
+
+function now() {
+  return new Date();
+}
+
+function sameMinute(a, b) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate() &&
+    a.getHours() === b.getHours() &&
+    a.getMinutes() === b.getMinutes()
+  );
+}
+
+// Roda a cada 1 minuto
+cron.schedule("* * * * *", async () => {
+  const current = now();
+
+  for (const userId in users) {
+    const user = users[userId];
+
+    // =========================
+    // 📅 AGENDA / REUNIÕES
+    // =========================
+    if (user.agenda) {
+      for (const item of user.agenda) {
+        if (item.notified) continue;
+        if (!item.datetime) continue;
+
+        const eventTime = new Date(item.datetime);
+        if (eventTime <= current) {
+          try {
+            await sendWhatsApp(
+              userId,
+              `⏰ Lembrete: ${item.title || "Compromisso"} agora.`
+            );
+            item.notified = true;
+          } catch (e) {
+            console.error("Erro agenda:", e);
+          }
+        }
+      }
+    }
+
+    // =========================
+    // 🏃 SAÚDE (ESPORTES / MEDS / SUPLEMENTOS)
+    // =========================
+    if (user.health) {
+      const allHealth = [
+        ...(user.health.sports || []),
+        ...(user.health.meds || []),
+        ...(user.health.supplements || [])
+      ];
+
+      for (const h of allHealth) {
+        if (!h.time) continue;
+
+        const target = new Date(current);
+        const [hh, mm] = String(h.time).split(":");
+        target.setHours(Number(hh), Number(mm), 0, 0);
+
+        // dispara apenas 1x por minuto-alvo
+        if (sameMinute(current, target)) {
+          if (h.lastNotified && sameMinute(new Date(h.lastNotified), target)) continue;
+
+          try {
+            await sendWhatsApp(userId, `💪 Lembrete: ${h.label}`);
+            h.lastNotified = target.toISOString();
+          } catch (e) {
+            console.error("Erro saúde:", e);
+          }
+        }
+      }
+    }
+
+    // =========================
+    // 💰 FINANÇAS (CONTAS)
+    // =========================
+    if (user.finance) {
+      for (const bill of user.finance) {
+        if (bill.notified) continue;
+        if (!bill.dueDate) continue;
+
+        const due = new Date(bill.dueDate);
+        if (due <= current) {
+          try {
+            await sendWhatsApp(
+              userId,
+              `💸 Conta a pagar hoje: ${bill.title} — R$ ${bill.amount}`
+            );
+            bill.notified = true;
+          } catch (e) {
+            console.error("Erro finanças:", e);
+          }
+        }
+      }
+    }
+  }
+});
 
 function getUser(userId) {
   if (!users[userId]) {
