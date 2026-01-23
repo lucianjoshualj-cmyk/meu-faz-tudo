@@ -42,28 +42,66 @@ cron.schedule("* * * * *", async () => {
   for (const userId in users) {
     const user = users[userId];
 
-    // =========================
-    // 📅 AGENDA / REUNIÕES
-    // =========================
-    if (user.agenda) {
-      for (const item of user.agenda) {
-        if (item.notified) continue;
-        if (!item.datetime) continue;
+   // =========================
+// 📅 AGENDA / REUNIÕES (INTELIGENTE)
+// =========================
+if (user.agenda) {
+  for (const item of user.agenda) {
+  if (item.done) continue;
+  if (!item.datetime) continue;
 
-        const eventTime = new Date(item.datetime);
-        if (eventTime <= current) {
-          try {
-            await sendWhatsApp(
-              userId,
-              `⏰ Lembrete: ${item.title || "Compromisso"} agora.`
-            );
-            item.notified = true;
-          } catch (e) {
-            console.error("Erro agenda:", e);
-          }
+    const eventTime = new Date(item.datetime);
+
+    // 🏢 PRESENCIAL → 1h antes
+    if (item.type === "presencial") {
+      const oneHourBefore = new Date(eventTime.getTime() - 60 * 60 * 1000);
+
+      if (sameMinute(current, oneHourBefore) && !item.notified1) {
+        try {
+          await sendWhatsApp(
+            userId,
+            `⏰ Reunião presencial em 1 hora.`
+          );
+          item.notified1 = true;
+          item.done = true;
+        } catch (e) {
+          console.error("Erro reunião presencial:", e);
         }
       }
     }
+
+    // 💻 ONLINE → 20min e 5min antes
+    if (item.type === "online") {
+      const twentyMinBefore = new Date(eventTime.getTime() - 20 * 60 * 1000);
+      const fiveMinBefore = new Date(eventTime.getTime() - 5 * 60 * 1000);
+
+      if (sameMinute(current, twentyMinBefore) && !item.notified1) {
+        try {
+          await sendWhatsApp(
+            userId,
+            `💻 Reunião online em 20 minutos.`
+          );
+          item.notified1 = true;
+        } catch (e) {
+          console.error("Erro reunião online 20min:", e);
+        }
+      }
+
+      if (sameMinute(current, fiveMinBefore) && !item.notified2) {
+        try {
+          await sendWhatsApp(
+            userId,
+            `💻 Reunião online em 5 minutos.`
+          );
+          item.notified2 = true;
+          item.done = true;
+        } catch (e) {
+          console.error("Erro reunião online 5min:", e);
+        }
+      }
+    }
+  }
+}
 
     // =========================
     // 🏃 SAÚDE (ESPORTES / MEDS / SUPLEMENTOS)
