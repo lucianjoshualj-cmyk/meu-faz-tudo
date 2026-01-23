@@ -646,11 +646,7 @@ function handleFinanceCommands(user, text) {
 app.post("/whatsapp", (req, res) => {
   // Responde IMEDIATAMENTE ao Twilio via TwiML (evita 11200/502)
   try {
-    res.set("Content-Type", "text/xml");
-    res.status(200).send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Message>Recebi! 😊 Já já eu te respondo.</Message>
-</Response>`);
+   res.sendStatus(200);
   } catch (e) {
     try { res.sendStatus(200); } catch (_) {}
   }
