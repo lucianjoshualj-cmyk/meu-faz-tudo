@@ -334,6 +334,118 @@ function handleHealthCommands(user, text) {
 
   return null; // não era comando de saúde
 }
+// ======================================
+// 📅 COMANDOS DE REUNIÕES + CONFIRMAÇÃO
+// ======================================
+
+function parseDateTime(text) {
+  const now = new Date();
+
+  // hoje / amanhã
+  if (/amanh[aã]/i.test(text)) {
+    now.setDate(now.getDate() + 1);
+  }
+
+  const time = parseHHMM(text);
+  if (!time) return null;
+
+  const [hh, mm] = time.split(":").map(Number);
+  now.setHours(hh, mm, 0, 0);
+
+  return now;
+}
+
+function parseMeetingAdd(text) {
+  const raw = normalize(text);
+
+  if (!/^reuni[aã]o/i.test(raw)) return null;
+
+  const isOnline = /online/i.test(raw);
+  const isPresencial = /presencial/i.test(raw);
+
+  if (!isOnline && !isPresencial) {
+    return { error: "A reunião é presencial ou online?" };
+  }
+
+  const datetime = parseDateTime(raw);
+  if (!datetime) {
+    return { error: "Não entendi a data/hora. Ex: Reunião amanhã às 15h presencial" };
+  }
+
+  return {
+    title: "Reunião",
+    type: isOnline ? "online" : "presencial",
+    datetime: datetime.toISOString()
+  };
+}
+
+function parseMeetingList(text) {
+  return /^reuni[oõ]es\s*:\s*listar\s*$/i.test(normalize(text));
+}
+
+function parseMeetingRemove(text) {
+  const m = normalize(text).match(/^reuni[oõ]es\s*:\s*remover\s+(.+)\s*$/i);
+  if (!m) return null;
+  return { hint: m[1] };
+}
+
+function formatMeetings(user) {
+  if (!user.agenda || !user.agenda.length) {
+    return "📅 Você não tem reuniões cadastradas.";
+  }
+
+  const lines = ["📅 Suas reuniões:"];
+  for (const m of user.agenda) {
+    const dt = new Date(m.datetime);
+    lines.push(
+      `- ${m.type} em ${dt.toLocaleDateString("pt-BR")} às ${dt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`
+    );
+  }
+  return lines.join("\n");
+}
+
+function handleMeetingCommands(user, text) {
+  // confirmação pendente
+  if (user.pendingMeeting) {
+    if (isYes(text)) {
+      const m = user.pendingMeeting;
+      user.agenda.push({
+        ...m,
+        notified1: false,
+        notified2: false
+      });
+      user.pendingMeeting = null;
+      return `✅ Reunião ${m.type} confirmada para ${new Date(m.datetime).toLocaleString("pt-BR")}.`;
+    }
+    if (isNo(text)) {
+      user.pendingMeeting = null;
+      return "❌ Reunião cancelada.";
+    }
+    return "Só pra confirmar: responde *sim* ou *não* 🙂";
+  }
+
+  // listar
+  if (parseMeetingList(text)) {
+    return formatMeetings(user);
+  }
+
+  // remover
+  const rem = parseMeetingRemove(text);
+  if (rem) {
+    user.agenda = [];
+    return "🗑️ Reuniões removidas.";
+  }
+
+  // adicionar
+  const add = parseMeetingAdd(text);
+  if (add) {
+    if (add.error) return add.error;
+    user.pendingMeeting = add;
+    return `Confirma reunião *${add.type}* em ${new Date(add.datetime).toLocaleString("pt-BR")}? (sim/não)`;
+  }
+
+  return null;
+}
 
 app.post("/whatsapp", (req, res) => {
   // Responde IMEDIATAMENTE ao Twilio via TwiML (evita 11200/502)
@@ -356,6 +468,13 @@ app.post("/whatsapp", (req, res) => {
 
       const user = getUser(from);
       user.memory.push({ role: "user", content: body });
+
+      // 0) comandos de reunião
+const meetReply = handleMeetingCommands(user, body);
+if (meetReply) {
+  await sendWhatsApp(from, meetReply);
+  return;
+}
 
       // 1) tenta comandos de saúde primeiro (com confirmação)
 const cmdReply = handleHealthCommands(user, body);
