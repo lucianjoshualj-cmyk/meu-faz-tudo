@@ -135,6 +135,68 @@ if (user.agenda) {
     }
 
     // =========================
+// 🌙 RESUMO DIÁRIO
+// =========================
+const hour = current.getHours();
+const minute = current.getMinutes();
+
+// 🌙 Resumo do dia seguinte (21:30)
+if (hour === 21 && minute === 30 && !user.summarySent) {
+  const lines = ["🌙 Resumo de amanhã:"];
+
+  // reuniões de amanhã
+  const tomorrow = new Date(current);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const meetingsTomorrow = (user.agenda || []).filter(m => {
+    const d = new Date(m.datetime);
+    return d.toDateString() === tomorrow.toDateString();
+  });
+
+  if (meetingsTomorrow.length) {
+    lines.push("📅 Reuniões:");
+    for (const m of meetingsTomorrow) {
+      const d = new Date(m.datetime);
+      lines.push(`- ${m.type} às ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`);
+    }
+  }
+
+  // saúde
+  const health = user.health || {};
+  const allHealth = [
+    ...(health.sports || []),
+    ...(health.meds || []),
+    ...(health.supplements || [])
+  ];
+
+  if (allHealth.length) {
+    lines.push("💪 Saúde:");
+    for (const h of allHealth) {
+      lines.push(`- ${h.label} às ${h.time}`);
+    }
+  }
+
+  lines.push("\nTem algo novo para amanhã?");
+  await sendWhatsApp(userId, lines.join("\n"));
+  user.summarySent = true;
+}
+
+// 🌙 Fechamento do dia (23:00)
+if (hour === 23 && minute === 0 && !user.closureSent) {
+  await sendWhatsApp(
+    userId,
+    "🌙 Antes de encerrar o dia: o que você conseguiu fazer hoje?"
+  );
+  user.closureSent = true;
+}
+
+// 🔄 Reset diário à meia-noite
+if (hour === 0 && minute === 1) {
+  user.summarySent = false;
+  user.closureSent = false;
+}
+
+    // =========================
     // 💰 FINANÇAS (CONTAS)
     // =========================
     if (user.finance) {
