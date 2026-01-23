@@ -484,6 +484,102 @@ function handleMeetingCommands(user, text) {
 
   return null;
 }
+// ======================================
+// 💰 COMANDOS DE FINANÇAS
+// ======================================
+
+function parseExpense(text) {
+  const m = normalize(text).match(/^gastei\s+(\d+(?:[.,]\d{1,2})?)\s+(.+)$/i);
+  if (!m) return null;
+  const amount = Number(m[1].replace(",", "."));
+  const label = m[2].trim();
+  if (isNaN(amount)) return null;
+  return { amount, label };
+}
+
+function parseBill(text) {
+  const m = normalize(text).match(/^conta\s+(.+?)\s+dia\s+(\d{1,2})\s+r?\$?\s*(\d+(?:[.,]\d{1,2})?)$/i);
+  if (!m) return null;
+  const title = m[1].trim();
+  const day = Number(m[2]);
+  const amount = Number(m[3].replace(",", "."));
+  if (!title || isNaN(day) || isNaN(amount)) return null;
+
+  const now = new Date();
+  const due = new Date(now.getFullYear(), now.getMonth(), day, 9, 0, 0);
+  if (due < now) due.setMonth(due.getMonth() + 1);
+
+  return { title, amount, dueDate: due.toISOString(), notified: false };
+}
+
+function parseFinanceList(text) {
+  return /^finan[cç]as\s*:\s*listar$/i.test(normalize(text));
+}
+
+function financeSummary(user) {
+  const expenses = user.expenses || [];
+  const bills = user.finance || [];
+
+  const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+  const totalBills = bills.reduce((s, b) => s + b.amount, 0);
+
+  const lines = [
+    "💰 Resumo financeiro:",
+    `- Gastos registrados: R$ ${totalExpenses.toFixed(2)}`,
+    `- Contas cadastradas: R$ ${totalBills.toFixed(2)}`
+  ];
+
+  return lines.join("\n");
+}
+
+function handleFinanceCommands(user, text) {
+  user.expenses = user.expenses || [];
+
+  // Gasto
+  const exp = parseExpense(text);
+  if (exp) {
+    user.expenses.push({
+      ...exp,
+      at: new Date().toISOString()
+    });
+    return `🧾 Gasto registrado: R$ ${exp.amount.toFixed(2)} — ${exp.label}`;
+  }
+
+  // Conta
+  const bill = parseBill(text);
+  if (bill) {
+    user.finance.push(bill);
+    return `💸 Conta cadastrada: ${bill.title} — R$ ${bill.amount.toFixed(2)} (dia ${new Date(bill.dueDate).getDate()})`;
+  }
+
+  // Listar
+  if (parseFinanceList(text)) {
+    if (!user.finance.length && !user.expenses.length) {
+      return "💰 Você ainda não registrou gastos ou contas.";
+    }
+    const lines = ["💰 Finanças:"];
+    if (user.expenses.length) {
+      lines.push("🧾 Gastos:");
+      for (const e of user.expenses.slice(-5)) {
+        lines.push(`- R$ ${e.amount.toFixed(2)} — ${e.label}`);
+      }
+    }
+    if (user.finance.length) {
+      lines.push("💸 Contas:");
+      for (const b of user.finance) {
+        lines.push(`- ${b.title} — R$ ${b.amount.toFixed(2)} (dia ${new Date(b.dueDate).getDate()})`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  // Resumo
+  if (/^resumo\s+financeiro$/i.test(normalize(text))) {
+    return financeSummary(user);
+  }
+
+  return null;
+}
 
 app.post("/whatsapp", (req, res) => {
   // Responde IMEDIATAMENTE ao Twilio via TwiML (evita 11200/502)
@@ -514,14 +610,21 @@ if (meetReply) {
   return;
 }
 
-      // 1) tenta comandos de saúde primeiro (com confirmação)
+      // 1) finanças
+const finReply = handleFinanceCommands(user, body);
+if (finReply) {
+  await sendWhatsApp(from, finReply);
+  return;
+}
+
+      // 2) tenta comandos de saúde primeiro (com confirmação)
 const cmdReply = handleHealthCommands(user, body);
 if (cmdReply) {
   await sendWhatsApp(from, cmdReply);
   return;
 }
 
-// 2) se não for comando, segue IA
+// 3) se não for comando, segue IA
 const reply = await askOpenAI(user, body);
 
       user.memory.push({ role: "assistant", content: reply });
